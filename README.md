@@ -3,6 +3,7 @@
 ## 다운로드
 
 [윈도우 다운로드](https://github.com/Area-01/Clip-Video_Downloader/raw/refs/heads/main/dist/cliper.zip)
+
 다운로드 이후 압축을 풀고 폴더 안에있는 .exe 파일을 실행시켜 주세요
 
 ## Credits & License
