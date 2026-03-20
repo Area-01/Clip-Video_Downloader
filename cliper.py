@@ -288,8 +288,12 @@ def run_commands():
             run_cmd_with_log(cmd2, "2/4 영상 다운로드 중")
         else:
             write_log("▶ [1~2/4 영상 다운로드] 시작 (유튜브 등 풀영상 yt-dlp 직접 다운로드)")
-            # 유튜브 등 범용 사이트는 최고의 화질(오디오 결합 포함)을 위해 bv*+ba/b 포맷을 사용하여 yt-dlp로 직접 다운로드
-            cmd1 = [YT_DLP_PATH, "--no-warnings", "--ffmpeg-location", FFMPEG_PATH, "-f", "bv*+ba/b", "-o", os.path.join(save_dir, "temp_clip.%(ext)s")]
+            # mp4 영상 + m4a(AAC) 음성 우선 선택, 없을 경우 최고 화질로 fallback
+            # --merge-output-format mp4: 항상 mp4로 mux → opus 음성 비호환 문제 방지
+            cmd1 = [YT_DLP_PATH, "--no-warnings", "--ffmpeg-location", FFMPEG_PATH,
+                    "-f", "bv*[ext=mp4]+ba[ext=m4a]/bv*+ba/b",
+                    "--merge-output-format", "mp4",
+                    "-o", os.path.join(save_dir, "temp_clip.%(ext)s")]
             if is_cut:
                 cmd1.extend(["--download-sections", f"*{pad_start_sec}-{pad_end_sec}"])
             cmd1.append(url)

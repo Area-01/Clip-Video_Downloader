@@ -1,0 +1,26 @@
+﻿LOG 2026/03/21
+Save Path: C:\Users\82107\Desktop\Cliper\bin\Logs
+Task Start: 2026/03/21 02:20:08
+Task CommandLine: C:\Users\82107\Desktop\Cliper\bin\N_m3u8DL-RE.exe https://light-slit.akamaized.net/chzzk/kr/live_rewind/c/live_rewind_kr/ymrrlky3d3sqyz8791d3nyjqptajsq/1080p/hdntl=exp=1774088416~acl=*%2fkr%2f*~data=hdntl~hmac=33d5417f536a3e53b0c36a0c10b10904f3baea5e978e95069fec0bd6fb2325df/vod_chunklist.m3u8 --save-dir E:/videos/터틀-기타클립 --save-name temp_clip --auto-select --thread-count 16 --custom-range 0:00:00-0:00:45
+
+02:20:08.227 INFO : N_m3u8DL-RE (Beta version) 20251029
+02:20:08.242 EXTRA: ffmpeg => C:\Users\82107\Desktop\Cliper\bin\ffmpeg.exe
+02:20:08.244 INFO : Loading URL: https://light-slit.akamaized.net/chzzk/kr/live_rewind/c/live_rewind_kr/ymrrlky3d3sqyz8791d3nyjqptajsq/1080p/hdntl=exp=1774088416~acl=*%2fkr%2f*~data=hdntl~hmac=33d5417f536a3e53b0c36a0c10b10904f3baea5e978e95069fec0bd6fb2325df/vod_chunklist.m3u8
+02:20:08.643 INFO : Content Matched: HTTP Live Streaming
+02:20:08.778 INFO : Parsing streams...
+02:20:09.609 WARN : Writing meta json
+02:20:10.760 INFO : Extracted, there are 1 streams, with 1 basic streams, 0 audio streams, 0 subtitle streams
+02:20:10.767 INFO : Vid Kbps | 8289 Segments | ~09h35m38s
+02:20:10.776 INFO : User customed range: 0:00:00-0:00:45
+02:20:10.781 WARN : Please note that custom range may sometimes result in audio and video being out of sync
+02:20:31.600 INFO : Selected streams:
+02:20:31.665 INFO : Vid Kbps | 11 Segments | ~00m45s
+02:20:31.722 WARN : Writing meta json
+02:20:31.884 INFO : Save Name: temp_clip
+02:20:32.323 INFO : Start downloading...Vid Kbps
+02:20:32.368 WARN : fMP4 is detected, binary merging is automatically enabled
+02:20:32.912 WARN : Reading media info...
+02:20:33.364 INFO : [0x1]: Video, h264 (avc1), 1920x1080
+02:20:33.370 INFO : [0x2]: Audio, aac (mp4a)
+02:20:34.852 INFO : Binary merging...
+02:20:39.223 INFO : Done
