@@ -9,8 +9,14 @@ import re
 import urllib.request
 from datetime import timedelta
 
-# --- 설정 파일 경로 ---
-CONFIG_FILE = "cliper_config.json"
+# --- 프로그램 경로 및 설정 파일 경로 ---
+def get_program_dir():
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+PROGRAM_DIR = get_program_dir()
+CONFIG_FILE = os.path.join(PROGRAM_DIR, "cliper_config.json")
 
 def load_config():
     if os.path.exists(CONFIG_FILE):
@@ -20,10 +26,10 @@ def load_config():
         except: pass
     return {}
 
-def save_config(save_dir, ext):
+def save_config(save_dir, ext, accel="CPU (기본)"):
     try:
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump({"save_dir": save_dir, "ext": ext}, f, ensure_ascii=False, indent=4)
+            json.dump({"save_dir": save_dir, "ext": ext, "accel": accel}, f, ensure_ascii=False, indent=4)
     except: pass
 
 # --- 배 속에 있는 프로그램 경로를 찾는 함수 ---
@@ -31,12 +37,54 @@ def get_resource_path(relative_path):
     try:
         base_path = sys._MEIPASS
     except Exception:
-        base_path = os.path.abspath(".")
+        base_path = PROGRAM_DIR
     return os.path.join(base_path, relative_path)
 
 YT_DLP_PATH = get_resource_path(os.path.join("bin", "yt-dlp.exe"))
 N_M3U8_PATH = get_resource_path(os.path.join("bin", "N_m3u8DL-RE.exe"))
 FFMPEG_PATH = get_resource_path(os.path.join("bin", "ffmpeg.exe"))
+
+def ensure_required_tools():
+    missing = []
+    for name, path in [
+        ("yt-dlp", YT_DLP_PATH),
+        ("N_m3u8DL-RE", N_M3U8_PATH),
+        ("ffmpeg", FFMPEG_PATH),
+    ]:
+        if not os.path.exists(path):
+            missing.append(f"{name}: {path}")
+    if missing:
+        raise FileNotFoundError("필수 실행 파일을 찾을 수 없습니다.\n" + "\n".join(missing))
+def build_ffmpeg_convert_cmd(temp_file, final_file, ext, cut_seek_sec, cut_duration_sec, use_gpu):
+    ext_lower = ext.lower()
+    cmd = [FFMPEG_PATH, "-y"]
+
+    if cut_seek_sec is not None:
+        cmd.extend(["-ss", sec_to_time(cut_seek_sec)])
+
+    if use_gpu and ext_lower in [".mp4", ".mkv", ".mov"]:
+        cmd.extend(["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"])
+
+    cmd.extend(["-i", temp_file])
+
+    if cut_duration_sec is not None:
+        cmd.extend(["-t", sec_to_time(cut_duration_sec)])
+
+    if ext_lower == ".mp3":
+        cmd.extend(["-vn", "-map", "0:a:0", "-c:a", "libmp3lame", "-b:a", "192k", "-ar", "44100", final_file])
+    elif ext_lower == ".gif":
+        cmd.extend(["-vf", "fps=15,scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos", "-loop", "0", final_file])
+    elif ext_lower == ".webm":
+        cmd.extend(["-map", "0:v:0", "-map", "0:a?", "-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "32", "-c:a", "libopus", "-b:a", "128k", final_file])
+    elif use_gpu:
+        cmd.extend(["-map", "0:v:0", "-map", "0:a?", "-c:v", "h264_nvenc", "-preset", "p4", "-cq", "23", "-c:a", "copy"])
+        if ext_lower in [".mp4", ".mov"]:
+            cmd.extend(["-movflags", "+faststart"])
+        cmd.append(final_file)
+    else:
+        cmd.extend(["-c", "copy", "-avoid_negative_ts", "make_zero", final_file])
+
+    return cmd
 
 # --- 시간 변환 함수 ---
 def time_to_sec(t_str):
@@ -221,23 +269,23 @@ def run_commands():
     save_dir = entry_dir.get().strip()
     filename = entry_filename.get().strip()
     ext_raw = combo_ext.get().strip()
+    accel_raw = combo_accel.get().strip()
 
     def reset_btn():
         btn_start.config(state=tk.NORMAL, bg=ACCENT_BTN, text="🚀 미디어 다운로드 시작")
         btn_stop.config(state=tk.DISABLED, text="⏹️ 다운로드 중지")
 
-    if not url or not save_dir or not filename or not ext_raw:
+    if not url or not save_dir or not filename or not ext_raw or not accel_raw:
         lbl_status.config(text="상태: 입력 오류 (모든 항목을 채워주세요)", fg=ACCENT_ERR)
         root.after(0, lambda: messagebox.showerror("오류", "영상 주소, 출력 형식, 저장 폴더, 파일명을 모두 입력해주세요."))
         root.after(0, reset_btn)
         return
 
     ext = ext_raw.split()[0]
-    save_config(save_dir, ext_raw)
+    save_config(save_dir, ext_raw, accel_raw)
 
     # 로그 파일은 프로그램이 실행되는 위치에 생성
-    program_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-    log_file_path = os.path.join(program_dir, "clip_log.txt")
+    log_file_path = os.path.join(PROGRAM_DIR, "clip_log.txt")
     write_log("=== 영상/클립 추출 작업 시작 ===")
 
     m3u8_range_args = []
@@ -266,8 +314,22 @@ def run_commands():
         write_log("알림: '구간 자르기'가 비활성화되어 풀영상을 다운로드합니다.")
 
     final_file = os.path.join(save_dir, f"{filename}{ext}")
+    temp_basename = f"cliper_temp_{os.getpid()}"
+    is_mp3_output = ext.lower() == ".mp3"
+    use_gpu = accel_raw.startswith("GPU")
 
     try:
+        ensure_required_tools()
+
+        if use_gpu:
+            write_log("알림: GPU(CUDA) 모드가 선택되었습니다. 다운로드는 기존 방식으로 진행하고 ffmpeg 변환 단계에서 CUDA/NVENC를 사용합니다.")
+            if is_mp3_output:
+                write_log("알림: MP3는 오디오 변환이라 GPU 가속 대상이 아니므로 CPU로 인코딩합니다.")
+            elif ext.lower() in [".gif", ".webm"]:
+                write_log("알림: 선택한 출력 형식은 CUDA/NVENC 경로 대신 호환 인코딩으로 처리합니다.")
+        else:
+            write_log("알림: CPU 모드로 처리합니다.")
+
         # 1단계 & 2단계 통합
         if "/clips/" in url:
             write_log("▶ [1/4 영상 원본 주소 추출] 시작 (HTML 스크래핑 우회)")
@@ -275,7 +337,7 @@ def run_commands():
             write_log(f"클립 주소 추출 완료: {m3u8_url[:50]}...")
             write_log("▶ [1/4 영상 원본 주소 추출] 완료\n")
             
-            cmd2 = [N_M3U8_PATH, m3u8_url, "--save-dir", save_dir, "--save-name", "temp_clip", "--auto-select", "--thread-count", "16"] + m3u8_range_args
+            cmd2 = [N_M3U8_PATH, m3u8_url, "--save-dir", save_dir, "--save-name", temp_basename, "--auto-select", "--thread-count", "16"] + m3u8_range_args
             run_cmd_with_log(cmd2, "2/4 영상 다운로드 중")
         elif "chzzk.naver.com" in url:
             # 치지직 VOD 및 기타 치지직 영상은 yt-dlp로 m3u8 주소만 추출 후 N_m3u8DL-RE 로 다운로드
@@ -284,7 +346,7 @@ def run_commands():
             out1 = run_cmd_with_log(cmd1, "1/4 영상 원본 주소 추출")
             m3u8_url = out1.strip().split('\n')[-1]
             
-            cmd2 = [N_M3U8_PATH, m3u8_url, "--save-dir", save_dir, "--save-name", "temp_clip", "--auto-select", "--thread-count", "16"] + m3u8_range_args
+            cmd2 = [N_M3U8_PATH, m3u8_url, "--save-dir", save_dir, "--save-name", temp_basename, "--auto-select", "--thread-count", "16"] + m3u8_range_args
             run_cmd_with_log(cmd2, "2/4 영상 다운로드 중")
         else:
             write_log("▶ [1~2/4 영상 다운로드] 시작 (유튜브 등 풀영상 yt-dlp 직접 다운로드)")
@@ -293,32 +355,28 @@ def run_commands():
             cmd1 = [YT_DLP_PATH, "--no-warnings", "--ffmpeg-location", FFMPEG_PATH,
                     "-f", "bv*[ext=mp4]+ba[ext=m4a]/bv*+ba/b",
                     "--merge-output-format", "mp4",
-                    "-o", os.path.join(save_dir, "temp_clip.%(ext)s")]
+                    "-o", os.path.join(save_dir, f"{temp_basename}.%(ext)s")]
             if is_cut:
                 cmd1.extend(["--download-sections", f"*{pad_start_sec}-{pad_end_sec}"])
             cmd1.append(url)
             run_cmd_with_log(cmd1, "1~2/4 영상 다운로드 중 (yt-dlp)")
         
-        temp_files = [os.path.join(save_dir, f) for f in os.listdir(save_dir) if f.startswith("temp_clip.") and not f.endswith('.m4a')]
+        temp_files = sorted(
+            os.path.join(save_dir, f)
+            for f in os.listdir(save_dir)
+            if f.startswith(f"{temp_basename}.") and not f.endswith('.m4a')
+        )
         if not temp_files:
             raise Exception("임시 파일 다운로드에 실패했습니다.")
         temp_file = temp_files[0]
         
-        # 3단계: 입력 탐색(Input Seeking)으로 키프레임에서 정확하게 잘라냄
-        # -ss를 -i 앞에 두면 ffmpeg가 바로 해당 키프레임으로 이동 후 스트림 복사 → 재인코딩 없이 즉시 완료
-        if cut_seek_sec is not None:
-            cmd3 = [FFMPEG_PATH, "-y",
-                    "-ss", sec_to_time(cut_seek_sec), "-i", temp_file,
-                    "-t",  sec_to_time(cut_duration_sec),
-                    "-c", "copy", "-avoid_negative_ts", "make_zero", final_file]
-        else:
-            cmd3 = [FFMPEG_PATH, "-y", "-i", temp_file, "-c", "copy", "-avoid_negative_ts", "make_zero", final_file]
+        cmd3 = build_ffmpeg_convert_cmd(temp_file, final_file, ext, cut_seek_sec, cut_duration_sec, use_gpu)
         run_cmd_with_log(cmd3, "3/4 영상 컷팅 및 포맷 변환")
         
         # 4단계
         write_log("▶ [4/4 임시 파일 정리] 시작")
         for f in os.listdir(save_dir):
-            if f.startswith("temp_clip."):
+            if f.startswith(f"{temp_basename}."):
                 try: 
                     os.remove(os.path.join(save_dir, f))
                     write_log(f"삭제 완료: {f}")
@@ -338,10 +396,10 @@ def run_commands():
             write_log(f"\n!!! 작업 중 치명적 오류 발생 !!!\n{str(e)}")
             root.after(0, lambda msg=str(e): messagebox.showerror("오류", f"작업 중 오류가 발생했습니다.\n로그 창을 확인해주세요.\n\n요약: {msg}"))
             
-        # 중단 및 에러 시, 쓸모없어진 temp_clip 임시 파일들 지워주기
+        # 중단 및 에러 시, 쓸모없어진 임시 파일들 지워주기
         write_log("\n* 남은 임시 파일을 정리합니다...")
         for f in os.listdir(save_dir):
-            if f.startswith("temp_clip."):
+            if f.startswith(f"{temp_basename}."):
                 try: os.remove(os.path.join(save_dir, f))
                 except: pass
     finally:
@@ -353,7 +411,7 @@ config = load_config()
 # --- 프리미엄 UI 디자인 구성 ---
 root = tk.Tk()
 root.title("클립 및 비디오 다운로더")
-root.geometry("580x680") 
+root.geometry("580x720") 
 root.resizable(False, False)
 root.configure(bg=BG_MAIN)
 
@@ -419,17 +477,22 @@ combo_ext = ttk.Combobox(panel_save, values=[".mp4 (기본)", ".mkv (고화질)"
 combo_ext.set(config.get("ext", ".mp4 (기본)"))
 combo_ext.grid(row=0, column=1, sticky="w", pady=(0, 10), padx=(10, 0), ipady=3)
 
-tk.Label(panel_save, text="저장 폴더", **lbl_style).grid(row=1, column=0, sticky="w", pady=(0, 10))
+tk.Label(panel_save, text="처리 장치", **lbl_style).grid(row=1, column=0, sticky="w", pady=(0, 10))
+combo_accel = ttk.Combobox(panel_save, values=["CPU (기본)", "GPU CUDA (NVIDIA)"], width=18, state="readonly", font=font_main)
+combo_accel.set(config.get("accel", "CPU (기본)"))
+combo_accel.grid(row=1, column=1, sticky="w", pady=(0, 10), padx=(10, 0), ipady=3)
+
+tk.Label(panel_save, text="저장 폴더", **lbl_style).grid(row=2, column=0, sticky="w", pady=(0, 10))
 entry_dir = tk.Entry(panel_save, width=32, **entry_style)
 entry_dir.insert(0, config.get("save_dir", ""))
-entry_dir.grid(row=1, column=1, pady=(0, 10), padx=(10, 5), sticky="w", ipady=5)
+entry_dir.grid(row=2, column=1, pady=(0, 10), padx=(10, 5), sticky="w", ipady=5)
 
 btn_browse = tk.Button(panel_save, text="찾기", command=select_directory, bg=ENTRY_BG, fg=FG_TEXT, activebackground=BG_PANEL, activeforeground=FG_TEXT, relief=tk.FLAT, font=font_main, bd=0, highlightbackground=BG_PANEL, highlightthickness=1)
-btn_browse.grid(row=1, column=2, sticky="w", pady=(0, 10), ipady=3, ipadx=8)
+btn_browse.grid(row=2, column=2, sticky="w", pady=(0, 10), ipady=3, ipadx=8)
 
-tk.Label(panel_save, text="파일 이름", **lbl_style).grid(row=2, column=0, sticky="w")
+tk.Label(panel_save, text="파일 이름", **lbl_style).grid(row=3, column=0, sticky="w")
 entry_filename = tk.Entry(panel_save, width=44, **entry_style)
-entry_filename.grid(row=2, column=1, columnspan=2, sticky="w", ipady=5, padx=(10, 0))
+entry_filename.grid(row=3, column=1, columnspan=2, sticky="w", ipady=5, padx=(10, 0))
 
 # 3. Action 버튼 메뉴
 frame_action = tk.Frame(main_frame, bg=BG_MAIN)
