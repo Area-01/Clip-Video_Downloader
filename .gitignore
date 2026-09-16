@@ -1,0 +1,8 @@
+__pycache__/
+build/
+*.spec
+.vscode/
+cliper_config.json
+clip_log.txt
+temp_clip.*
+*.exe
